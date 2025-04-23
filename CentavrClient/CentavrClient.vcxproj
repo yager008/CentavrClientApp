@@ -137,6 +137,7 @@
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="addr.cpp" />
     <ClCompile Include="CentavrClient.cpp" />
   </ItemGroup>
   <ItemGroup>

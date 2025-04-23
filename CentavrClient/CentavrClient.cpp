@@ -1,42 +1,88 @@
 #include "framework.h"
 #include "CentavrClient.h"
-#include <wininet.h>  // For HTTP requests
 #include <windows.h>
-#include <stdio.h>  // For fopen_s, fwrite, fclose
-#include <string>    // For string handling
-#include <windowsx.h>  // For SS_MULTILINE constant
+#include <shellapi.h>
+#include <stdio.h>  
+#include <windowsx.h>  
 #include <iostream>
 #include <thread>
 #include <chrono>
 #include <atomic>
-
 #include <winsock2.h>
 #include <iphlpapi.h>
-#pragma comment(lib, "iphlpapi.lib")
-
+#include <locale>
+#include <codecvt>
+#include <string>
+#include <vector>
+#include <Wininet.h>
+#include <fstream> 
 #include <ws2tcpip.h>
 
 #define MAX_LOADSTRING 100
 
-// Global Variables:
-HINSTANCE hInst;                                // current instance
-WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
-WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
-HWND hWndButton;                                // Handle for the button
-HWND hWndTextOutput;                            // Handle for the text output
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "wininet.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "Ws2_32.lib")
 
-// Function prototypes
+using namespace std::chrono;
+
+//Глобальные переменные
+HINSTANCE hInst;                             
+WCHAR szTitle[MAX_LOADSTRING];              
+WCHAR szWindowClass[MAX_LOADSTRING];       
+HWND hWndConnectButton;                   
+HWND hWndOutputTextBox;                  
+HBRUSH hRedBrush;
+HWND hWndLoginIntputTextBox; 
+HWND hWndIPIntputTextBox; 
+bool isClicked = false;
+bool isLoggedIn = false;
+bool isThereAnError = false;
+std::string nameToSend = "";
+std::string ipToSend= "";
+steady_clock::time_point lastMouseMoveTime = steady_clock::now();
+HHOOK g_mouseHook = NULL;
+bool silentMode = false;  // Default to false, assuming not in silent mode
+
+//Прототипы
 ATOM MyRegisterClass(HINSTANCE hInstance);
-BOOL InitInstance(HINSTANCE hInstance, int nCmdShow);
+BOOL InitInstance(HINSTANCE hInstance, int nCmdShow, bool silentMode);
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+LRESULT CALLBACK NewWindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 void SendHttpRequest(HWND hWnd);
 void UpdateTextOutput(HWND hWnd, const std::string& text);
+void ShowNotificationWindow(HWND hWndParent, const std::string& message);
 
-// Function to send HTTP GET request
+//Для захвата курсора
+LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam)
+{
+    if (nCode == HC_ACTION) {
+        if (wParam == WM_MOUSEMOVE) {
+            lastMouseMoveTime = steady_clock::now();
+        }
+    }
+    return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
+}
 
+void SetGlobalMouseHook()
+{
+    g_mouseHook = SetWindowsHookEx(WH_MOUSE_LL, MouseProc, NULL, 0);
+    if (g_mouseHook == NULL) {
+        MessageBoxW(NULL, L"Failed to set mouse hook", L"Error", MB_OK | MB_ICONERROR);
+    }
+}
 
+void RemoveGlobalMouseHook()
+{
+    if (g_mouseHook != NULL) {
+        UnhookWindowsHookEx(g_mouseHook);
+        g_mouseHook = NULL;
+    }
+}
 
+//Получение адресов
 std::string GetMACAddress() {
     IP_ADAPTER_INFO adapterInfo[16];
     DWORD buflen = sizeof(adapterInfo);
@@ -58,8 +104,6 @@ std::string GetMACAddress() {
     return "unknown";
 }
 
-#pragma comment(lib, "Ws2_32.lib")
-
 std::string GetLocalIPAddress() {
     char hostname[256];
     if (gethostname(hostname, sizeof(hostname)) != 0) {
@@ -67,7 +111,7 @@ std::string GetLocalIPAddress() {
     }
 
     addrinfo hints = {};
-    hints.ai_family = AF_INET; // Only IPv4
+    hints.ai_family = AF_INET; 
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
@@ -80,58 +124,171 @@ std::string GetLocalIPAddress() {
     for (addrinfo* ptr = result; ptr != nullptr; ptr = ptr->ai_next) {
         sockaddr_in* sockaddr_ipv4 = reinterpret_cast<sockaddr_in*>(ptr->ai_addr);
         inet_ntop(AF_INET, &(sockaddr_ipv4->sin_addr), ipStr, sizeof(ipStr));
-        break; // Use first result
+        break; 
     }
 
     freeaddrinfo(result);
     return std::string(ipStr);
 }
 
+void SendScreenshotToServer(HWND hWnd) {
+    if (!isLoggedIn) return;
+    if (isThereAnError) return;
 
-void SendHttpRequest(HWND hWnd)
-{
+    // Захват окна
+    HDC hdcScreen = GetDC(NULL);
+    HDC hdcMemDC = CreateCompatibleDC(hdcScreen);
+    int nScreenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int nScreenHeight = GetSystemMetrics(SM_CYSCREEN);
+    HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, nScreenWidth, nScreenHeight);
+    SelectObject(hdcMemDC, hBitmap);
+    BitBlt(hdcMemDC, 0, 0, nScreenWidth, nScreenHeight, hdcScreen, 0, 0, SRCCOPY);
 
-	WSADATA wsaData;
-	WSAStartup(MAKEWORD(2, 2), &wsaData);
+    // Настройка битмап в хедер (Иначе не будет правильно отображатсья на сервере)
+    BITMAPINFOHEADER biHeader = {};
+    biHeader.biSize = sizeof(BITMAPINFOHEADER);
+    biHeader.biWidth = nScreenWidth;
+    biHeader.biHeight = -nScreenHeight; 
+    biHeader.biPlanes = 1;
+    biHeader.biBitCount = 24;
+    biHeader.biCompression = BI_RGB;
 
+    int rowSize = ((nScreenWidth * 3 + 3) & ~3); 
+    biHeader.biSizeImage = rowSize * nScreenHeight;
 
-    HINTERNET hInternet, hConnect;
-    DWORD dwBytesRead;
-    DWORD dwTotalBytesRead = 0;
-    DWORD dwBufferSize = 4096;  // Reading in chunks of 4KB
-    BYTE* buffer = new BYTE[dwBufferSize];
+    std::vector<BYTE> bitmapData(biHeader.biSizeImage);
+    GetDIBits(hdcMemDC, hBitmap, 0, nScreenHeight, bitmapData.data(), (BITMAPINFO*)&biHeader, DIB_RGB_COLORS);
 
+    BITMAPFILEHEADER bmfHeader;
+    bmfHeader.bfType = 0x4D42; 
+    bmfHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    bmfHeader.bfSize = bmfHeader.bfOffBits + bitmapData.size();
+    bmfHeader.bfReserved1 = 0;
+    bmfHeader.bfReserved2 = 0;
 
-	std::string ip = GetLocalIPAddress();
-	std::string mac = GetMACAddress();
-	std::string fullUrl = "http://localhost/CentavrJokes/main.php?ip=" + ip + "&mac=" + mac;
-	const char* url = fullUrl.c_str();
+    std::vector<BYTE> fullBitmap(bmfHeader.bfSize);
+    memcpy(fullBitmap.data(), &bmfHeader, sizeof(BITMAPFILEHEADER));
+    memcpy(fullBitmap.data() + sizeof(BITMAPFILEHEADER), &biHeader, sizeof(BITMAPINFOHEADER));
+    memcpy(fullBitmap.data() + bmfHeader.bfOffBits, bitmapData.data(), bitmapData.size());
 
+    //Сохранение на клиенте (для тестрования)
+    std::wstring filePath = L"screenshot_output.bmp";
+    HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        DWORD bytesWritten;
+        WriteFile(hFile, fullBitmap.data(), fullBitmap.size(), &bytesWritten, NULL);
+        CloseHandle(hFile);
+        ShellExecuteW(NULL, L"open", filePath.c_str(), NULL, NULL, SW_SHOWNORMAL);
+    }
 
-    //const char* url = "https://dragonball-api.com/api/characters/1";  // URL to fetch JSON data
-    //const char* url = "http://localhost/CentavrJokes/main.php";
+    //Отправка на сервер
+    std::string ip = GetLocalIPAddress();
+    std::string mac = GetMACAddress();
+    std::string login = nameToSend;
+    std::string serverip = ipToSend;
+    //std::string fullUrl = "http://"+ serverip +"/CentavrServer/main.php/uploads?login=" + login;
+    std::string fullUrl = "http://"+ serverip +"/main.php/uploads?login=" + login;
 
-    // Initialize WinINet
-    hInternet = InternetOpenA("CentavrClient", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
-    if (hInternet == NULL) {
+    HINTERNET hInternet = InternetOpenA("CentavrClient", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    if (!hInternet) {
         MessageBoxW(hWnd, L"Не удалось инициализировать интернет-соединение", L"Ошибка", MB_OK | MB_ICONERROR);
         return;
     }
 
-    // Connect to the server (replace with your server URL)
-    hConnect = InternetOpenUrlA(hInternet, url, NULL, 0, INTERNET_FLAG_RELOAD, 0);
-    if (hConnect == NULL) {
-        MessageBoxW(hWnd, L"Не удалось подключиться к серверу", L"Ошибка", MB_OK | MB_ICONERROR);
+    URL_COMPONENTSA urlComp = {};
+    char host[256], path[1024];
+    urlComp.dwStructSize = sizeof(urlComp);
+    urlComp.lpszHostName = host;
+    urlComp.dwHostNameLength = sizeof(host);
+    urlComp.lpszUrlPath = path;
+    urlComp.dwUrlPathLength = sizeof(path);
+    InternetCrackUrlA(fullUrl.c_str(), 0, 0, &urlComp);
+
+    HINTERNET hConnect = InternetConnectA(hInternet, host, INTERNET_DEFAULT_HTTP_PORT, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    if (!hConnect) {
+        MessageBoxW(hWnd, L"Ошибка соединения с хостом", L"Ошибка", MB_OK | MB_ICONERROR);
         InternetCloseHandle(hInternet);
         return;
     }
 
-    // Start reading the response data
+    HINTERNET hRequest = HttpOpenRequestA(hConnect, "PUT", path, NULL, NULL, NULL, INTERNET_FLAG_RELOAD, 0);
+    if (!hRequest) {
+        MessageBoxW(hWnd, L"Ошибка создания запроса", L"Ошибка", MB_OK | MB_ICONERROR);
+        InternetCloseHandle(hConnect);
+        InternetCloseHandle(hInternet);
+        return;
+    }
+
+    std::string headers = "Content-Type: application/octet-stream\r\n";
+    BOOL bSent = HttpSendRequestA(hRequest, headers.c_str(), headers.length(), fullBitmap.data(), fullBitmap.size());
+
+    if (!bSent) {
+        MessageBoxW(hWnd, L"Не удалось отправить скриншот", L"Ошибка", MB_OK | MB_ICONERROR);
+    } else {
+        MessageBoxW(hWnd, L"Скриншот отправлен на сервак", L"Успех", MB_OK | MB_ICONINFORMATION);
+    }
+
+    // Очистка
+    InternetCloseHandle(hRequest);
+    InternetCloseHandle(hConnect);
+    InternetCloseHandle(hInternet);
+    DeleteObject(hBitmap);
+    DeleteDC(hdcMemDC);
+    ReleaseDC(NULL, hdcScreen);
+}
+
+void SendHttpRequest(HWND hWnd)
+{
+    if (isLoggedIn == false) return;
+
+	if (isThereAnError == true) return;
+
+
+    auto now = steady_clock::now();
+    auto duration = duration_cast<seconds>(now - lastMouseMoveTime).count();
+    if (duration > 1) {
+        return;
+    }
+
+	WSADATA wsaData;
+	WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    HINTERNET hInternet, hConnect;
+    DWORD dwBytesRead;
+    DWORD dwTotalBytesRead = 0;
+    DWORD dwBufferSize = 4096; 
+    BYTE* buffer = new BYTE[dwBufferSize];
+
+	std::string ip = GetLocalIPAddress();
+	std::string mac = GetMACAddress();
+
+	//std::string fullUrl = "http://" + ipToSend + "/CentavrServer/main.php?ip=" + ip + "&mac=" + mac +"&login=" + nameToSend;
+	std::string fullUrl = "http://" + ipToSend + "/main.php?ip=" + ip + "&mac=" + mac +"&login=" + nameToSend;
+	const char* url = fullUrl.c_str();
+
+
+    hInternet = InternetOpenA("CentavrClient", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    if (hInternet == NULL) {
+        isThereAnError = true;
+        MessageBoxW(hWnd, L"Не удалось инициализировать интернет-соединение", L"Ошибка", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    hConnect = InternetOpenUrlA(hInternet, url, NULL, 0, INTERNET_FLAG_RELOAD, 0);
+    if (hConnect == NULL) {
+        isThereAnError = true;
+        MessageBoxW(hWnd, L"Не удалось подключиться к серверу", L"Ошибка", MB_OK | MB_ICONERROR);
+        InternetCloseHandle(hInternet);
+
+        return;
+    }
+
     while (InternetReadFile(hConnect, buffer, dwBufferSize, &dwBytesRead) && dwBytesRead > 0) {
         dwTotalBytesRead += dwBytesRead;
     }
 
     if (dwTotalBytesRead == 0) {
+        isThereAnError = true;
         MessageBoxW(hWnd, L"Ответ от сервера не содержит данных", L"Ошибка", MB_OK | MB_ICONERROR);
         delete[] buffer;
         InternetCloseHandle(hConnect);
@@ -139,26 +296,115 @@ void SendHttpRequest(HWND hWnd)
         return;
     }
 
-    // Convert the buffer into a string for display
     std::string jsonResponse(reinterpret_cast<char*>(buffer), dwTotalBytesRead);
 
-    // Clean up
     delete[] buffer;
     InternetCloseHandle(hConnect);
     InternetCloseHandle(hInternet);
 
-    // Update the text output in the window
     UpdateTextOutput(hWnd, jsonResponse);
+
+    //парсинг джейсона, чтобы получить значение bool sendScreenShot
+	std::string sendScreenShotValue;
+	size_t keyPos = jsonResponse.find("\"sendScreenShot\"");
+	if (keyPos != std::string::npos) {
+		size_t colonPos = jsonResponse.find(":", keyPos);
+		size_t quoteStart = jsonResponse.find("\"", colonPos);
+		size_t quoteEnd = jsonResponse.find("\"", quoteStart + 1);
+		if (quoteStart != std::string::npos && quoteEnd != std::string::npos) {
+			sendScreenShotValue = jsonResponse.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
+		}
+	}
+
+    //если тру то отправляем скриншот на сервер
+	if (sendScreenShotValue == "true") {
+		ShowNotificationWindow(hWnd, sendScreenShotValue);
+        SendScreenshotToServer(hWnd);
+	}
+
 }
 
+//Сообщение об отправке скриншота
+void ShowNotificationWindow(HWND hWndParent, const std::string& message)
+{
+    const wchar_t CLASS_NAME[] = L"NotificationWindow";
+
+    std::wstring wMessage(message.begin(), message.end());
+
+    static bool isClassRegistered = false;
+    if (!isClassRegistered)
+    {
+        WNDCLASS wc = {};
+        wc.lpfnWndProc = DefWindowProc;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = CLASS_NAME;
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        RegisterClass(&wc);
+        isClassRegistered = true;
+    }
+
+    HWND hNotifyWnd = CreateWindowEx(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        CLASS_NAME,
+        NULL,
+        WS_POPUP,
+        100, 100, 300, 100, 
+        hWndParent,
+        NULL,
+        GetModuleHandle(NULL),
+        NULL
+    );
+
+    HWND hStatic = CreateWindow(
+        L"STATIC",
+        wMessage.c_str(),
+        WS_CHILD | WS_VISIBLE | SS_CENTER,
+        10, 30, 280, 40,
+        hNotifyWnd,
+        NULL,
+        GetModuleHandle(NULL),
+        NULL
+    );
+
+
+
+
+    ShowWindow(hNotifyWnd, SW_SHOWNOACTIVATE);
+    UpdateWindow(hNotifyWnd);
+
+
+
+    std::thread([hNotifyWnd]() {
+        Sleep(1000);
+        PostMessage(hNotifyWnd, WM_CLOSE, 0, 0);
+    }).detach();
+}
+
+
+//Добавление в автозапуск
+bool AddToStartup(const std::wstring& appName, const std::wstring& exePath)
+{
+    HKEY hKey;
+    LONG result = RegOpenKeyExW(HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        0, KEY_SET_VALUE, &hKey);
+
+    if (result != ERROR_SUCCESS) return false;
+
+    result = RegSetValueExW(hKey, appName.c_str(), 0, REG_SZ,
+        (const BYTE*)exePath.c_str(), (exePath.size() + 1) * sizeof(wchar_t));
+
+    RegCloseKey(hKey);
+    return (result == ERROR_SUCCESS);
+}
+
+// обновление текста в текст боксе
 void UpdateTextOutput(HWND hWnd, const std::string& text)
 {
-    // Set the text to a static text control (like a label or a text box)
-    SetWindowTextA(hWndTextOutput, text.c_str());
+    SetWindowTextA(hWndOutputTextBox, text.c_str() );
 }
 
-//
-// wWinMain function
+// главная функция
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
                      _In_ LPWSTR    lpCmdLine,
@@ -167,14 +413,32 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-
-    // Initialize global strings
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_CENTAVRCLIENT, szWindowClass, MAX_LOADSTRING);
+
     MyRegisterClass(hInstance);
 
-    // Perform application initialization:
-    if (!InitInstance(hInstance, nCmdShow))
+    WNDCLASSW wc = { 0 };
+    wc.lpfnWndProc = NewWindowProc;
+    wc.hInstance = hInstance;
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.lpszClassName = L"MyPopupWindow";
+    RegisterClassW(&wc);
+
+
+	bool silentMode = false;
+	HKEY hKey;
+	DWORD value = 0;
+	DWORD dataSize = sizeof(DWORD);
+
+	if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\MyAppName", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+		RegQueryValueExW(hKey, L"SilentStart", NULL, NULL, (LPBYTE)&value, &dataSize);
+		RegCloseKey(hKey);
+		silentMode = (value == 1);
+	}
+
+
+    if (!InitInstance(hInstance, nCmdShow, silentMode))
     {
         return FALSE;
     }
@@ -182,6 +446,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_CENTAVRCLIENT));
 
     MSG msg;
+
+    SetGlobalMouseHook();
+
 
     // Main message loop:
     while (GetMessage(&msg, nullptr, 0, 0))
@@ -192,193 +459,488 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             DispatchMessage(&msg);
         }
     }
+    RemoveGlobalMouseHook();
 
     return (int) msg.wParam;
 }
 
-// Register the window class
+//регистрация главного окна
 ATOM MyRegisterClass(HINSTANCE hInstance)
 {
     WNDCLASSEXW wcex;
 
     wcex.cbSize = sizeof(WNDCLASSEX);
 
-    wcex.style          = CS_HREDRAW | CS_VREDRAW;
-    wcex.lpfnWndProc    = WndProc;
-    wcex.cbClsExtra     = 0;
-    wcex.cbWndExtra     = 0;
-    wcex.hInstance      = hInstance;
-    wcex.hIcon          = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CENTAVRCLIENT));
-    wcex.hCursor        = LoadCursor(nullptr, IDC_ARROW);
-    wcex.hbrBackground  = (HBRUSH)(COLOR_WINDOW+1);
-    wcex.lpszMenuName   = MAKEINTRESOURCEW(IDC_CENTAVRCLIENT);
-    wcex.lpszClassName  = szWindowClass;
-    wcex.hIconSm        = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
+	wcex.style          = CS_HREDRAW | CS_VREDRAW;
+	wcex.lpfnWndProc    = WndProc;
+	wcex.cbClsExtra     = 0;
+	wcex.cbWndExtra     = 0;
+	wcex.hInstance      = hInstance;
+	wcex.hIcon          = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CENTAVRCLIENT));
+	wcex.hCursor        = LoadCursor(nullptr, IDC_ARROW);
+	wcex.hbrBackground  = (HBRUSH)(COLOR_BTNFACE + 1);  
+
+	HBRUSH hBackgroundBrush = CreateSolidBrush(RGB(245, 245, 245)); 
+	wcex.lpszMenuName   = nullptr;                      
+	wcex.lpszClassName  = szWindowClass;
+	wcex.hIconSm        = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
 
     return RegisterClassExW(&wcex);
 }
 
-// Initialize instance
-BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
-{
-   hInst = hInstance; // Store instance handle in our global variable
+NOTIFYICONDATA nid = { 0 };
 
-   HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
-      CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
+//создаем все содержание главного окна
+BOOL InitInstance(HINSTANCE hInstance, int nCmdShow, bool silentMode = false)
+{
+   hInst = hInstance; 
+
+	int width = 400;
+	int height = 400;
+	DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+	RECT rect = { 0, 0, width, height };
+	AdjustWindowRect(&rect, style, FALSE);
+	int adjustedWidth = rect.right - rect.left;
+	int adjustedHeight = rect.bottom - rect.top;
+	HWND hWnd = CreateWindowExW(
+		0,
+		szWindowClass,
+		szTitle,
+		style,
+		CW_USEDEFAULT, CW_USEDEFAULT,
+		adjustedWidth, adjustedHeight,
+		nullptr,
+		nullptr,
+		hInstance,
+		nullptr
+	);
 
    if (!hWnd)
    {
       return FALSE;
    }
 
-   // Create button
-   HWND hWndButton = CreateWindowW(
-      L"BUTTON",  // Predefined class for buttons
-      L"Get Bible Info",  // Button text
-      WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,  // Button style
-      50, 50,  // Position of the button
-      200, 30,  // Size of the button
-      hWnd,     // Parent window
-      (HMENU)1, // ID of the button
-      hInstance,  // Instance handle
+ 
+   HWND hWndConnectButton = CreateWindowW(
+      L"BUTTON",  
+      L"Connect", 
+      WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON, 
+      50, 185,  
+      200, 30, 
+      hWnd,    
+      (HMENU)2,
+      hInstance,  
       NULL
    );
 
-   // Create a static control for displaying text (the JSON output)
+   HWND hWndStartupButton = CreateWindowW(
+      L"BUTTON",  
+      L"Add to startup", 
+      WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON, 
+      50, 355,  
+      200, 30, 
+      hWnd,    
+      (HMENU)4,
+      hInstance,  
+      NULL
+   );
 
-	hWndTextOutput = CreateWindowExW(
+	HWND hWndLoginLabel = CreateWindowW(
+		L"STATIC",             
+		L"Login", 
+		WS_VISIBLE | WS_CHILD, 
+		50, 80,               
+		200, 30,             
+		hWnd,               
+		(HMENU)3,          
+		hInstance,        
+		NULL
+	);
+
+	HWND hWndPasswordLabel = CreateWindowW(
+		L"STATIC",            
+		L"Password", 
+		WS_VISIBLE | WS_CHILD,
+		50, 130,             
+		200, 30,            
+		hWnd,              
+		(HMENU)3,         
+		hInstance,       
+		NULL
+	);
+
+	HWND hWndOutputTextLabel = CreateWindowW(
+		L"STATIC",      
+		L"Output",
+		WS_VISIBLE | WS_CHILD, 
+		50, 220,              
+		200, 30,             
+		hWnd,               
+		(HMENU)3,          
+		hInstance,        
+		NULL
+	);
+
+	HWND hWndAppTextLabel = CreateWindowW(
+		L"STATIC",            
+		L"IP of server",
+		WS_VISIBLE | WS_CHILD,
+		50,30,              
+		200, 30,            
+		hWnd,              
+		(HMENU)3,         
+		hInstance,       
+		NULL
+	);
+
+
+	hWndIPIntputTextBox = CreateWindowExW(
+		WS_EX_CLIENTEDGE,
+		L"EDIT",
+		L"195.133.194.94",
+		//L"localhost/CentavrServer/",
+		WS_VISIBLE | WS_CHILD | ES_AUTOHSCROLL,
+		50, 50,
+		300, 25,
+		hWnd,
+		(HMENU)1,
+		hInstance,
+		NULL
+	);
+
+	hWndLoginIntputTextBox = CreateWindowExW(
+		WS_EX_CLIENTEDGE,
+		L"EDIT",
+		L"user",
+		WS_VISIBLE | WS_CHILD | ES_AUTOHSCROLL,
+		50, 100,
+		300, 25,
+		hWnd,
+		(HMENU)1,
+		hInstance,
+		NULL
+	);
+
+
+   HWND hWndPasswordInputTextBox = CreateWindowExW(
+    	WS_EX_CLIENTEDGE,           
+      L"EDIT",    
+      L"",       
+      WS_VISIBLE | WS_CHILD | ES_AUTOHSCROLL,
+      50, 150,   
+      300, 25,  
+      hWnd,    
+      (HMENU)2,  
+      hInstance,
+      NULL
+   );
+
+
+	hWndOutputTextBox = CreateWindowExW(
 		WS_EX_CLIENTEDGE,
 		L"EDIT",
 		L"",
 		WS_VISIBLE | WS_CHILD | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL,
-		50, 100,
-		300, 200,
+		50, 240,   
+		300, 105,  
 		hWnd,
 		NULL,
 		hInstance,
 		NULL
 	);
 
+	HWND hWndSilentStartButton = CreateWindowW(
+		L"BUTTON",
+		L"Silent Start",
+		WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+		255, 355,
+		100, 30,
+		hWnd,
+		(HMENU)5,
+		hInstance,
+		NULL
+	);
 
-   if (!hWndButton || !hWndTextOutput)
+
+
+
+   if (!hWndConnectButton || !hWndOutputTextBox || !hWndLoginIntputTextBox)
    {
-      return FALSE; // If button or text output creation fails, return FALSE
+      return FALSE; 
+
    }
 
-   ShowWindow(hWnd, nCmdShow);
+    if (!silentMode) {
+        ShowWindow(hWnd, nCmdShow);
+	   UpdateWindow(hWnd);
+        //ShowWindow(hWnd, SW_HIDE); // скрываем
+    } else {
+        ShowWindow(hWnd, SW_HIDE); // скрываем
+    }
+
+
    UpdateWindow(hWnd);
+
+   SendMessage(hWnd, WM_COMMAND, MAKEWPARAM(2, BN_CLICKED), (LPARAM)hWnd);
 
    return TRUE;
 }
 
+#define IDT_HTTP_TIMER 1  
+#define TIMER_INTERVAL 2000 
 
-INT_PTR CALLBACK LoginProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
-{
-    switch (message)
-    {
-    case WM_INITDIALOG:
-        return (INT_PTR)TRUE;
-
-    case WM_COMMAND:
-        if (LOWORD(wParam) == IDOK)
-        {
-            TCHAR username[100], password[100];
-            GetDlgItemText(hDlg, IDC_USERNAME, username, 100);
-            GetDlgItemText(hDlg, IDC_PASSWORD, password, 100);
-
-            // TODO: Replace this with actual login logic
-            if (wcscmp(username, L"admin") == 0 && wcscmp(password, L"1234") == 0)
-            {
-                EndDialog(hDlg, IDOK);
-            }
-            else
-            {
-                MessageBox(hDlg, L"Invalid username or password", L"Login Failed", MB_ICONERROR);
-            }
-            return (INT_PTR)TRUE;
-        }
-        else if (LOWORD(wParam) == IDCANCEL)
-        {
-            EndDialog(hDlg, IDCANCEL);
-            return (INT_PTR)TRUE;
-        }
-        break;
-    }
-    return (INT_PTR)FALSE;
-}
-
-
-
-
-#define IDT_HTTP_TIMER 1
-
-// WndProc function
+//Обработка сообщений
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+
+    static HBRUSH hbrNormal = CreateSolidBrush(RGB(255, 255, 255));
+    static HBRUSH hbrPressed = CreateSolidBrush(RGB(0, 255, 0));
+    static bool isPressed = false; 
+
+	PAINTSTRUCT ps;
+	HDC hdc = BeginPaint(hWnd, &ps);
+	
+	isClicked = false;
+
+	HBRUSH hBrush = CreateSolidBrush(isClicked ? RGB(0, 255, 0) : RGB(255, 0, 0)); 
+	RECT rect = { 250,185, 350, 215 }; 
+	FillRect(hdc, &rect, hBrush);
+	DeleteObject(hBrush);
+
+	SetBkMode(hdc, TRANSPARENT);
+	SetTextColor(hdc, RGB(0, 0, 0));
+
+	const wchar_t* text = L"Not connected";
+	DrawText(hdc, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+	EndPaint(hWnd, &ps);
+
     switch (message)
     {
 
-    case WM_CREATE:
-        SetTimer(hWnd, IDT_HTTP_TIMER, 2000, NULL); // 5 seconds
-        break;
-    case WM_TIMER:
-        if (wParam == IDT_HTTP_TIMER) {
-            SendHttpRequest(hWnd);
-        }
-        break;
-    case WM_COMMAND:
+		case WM_CREATE:
+			hRedBrush = CreateSolidBrush(RGB(255, 0, 0));  // Creating red brush
+			
+			// Set the timer
+			SetTimer(hWnd, IDT_HTTP_TIMER, TIMER_INTERVAL, NULL);
+			
+			// Check the silentMode flag and control window visibility
+			if (silentMode) {
+				ShowWindow(hWnd, SW_HIDE);  // Hide window if silentMode is enabled
+			} else {
+				ShowWindow(hWnd, SW_SHOWNORMAL);  // Show window normally if silentMode is off
+			}
+
+			break;
+
+
+		case WM_MOUSEMOVE:
+			lastMouseMoveTime = steady_clock::now();
+			break;
+
+
+		case WM_DRAWITEM:
+		{
+			LPDRAWITEMSTRUCT lpDrawItem = (LPDRAWITEMSTRUCT)lParam;
+
+			if (lpDrawItem->CtlID == 2) {
+				SetBkColor(lpDrawItem->hDC, RGB(255, 0, 0));
+				SetTextColor(lpDrawItem->hDC, RGB(255, 255, 255));
+				FillRect(lpDrawItem->hDC, &lpDrawItem->rcItem, CreateSolidBrush(RGB(255, 0, 0)));
+
+				DrawTextW(lpDrawItem->hDC, L"not logged in", -1, &lpDrawItem->rcItem,
+						  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+				return TRUE;
+			}
+		}
+		break;
+            
+
+        case WM_TIMER:
+            if (wParam == IDT_HTTP_TIMER) {
+                SendHttpRequest(hWnd);
+            }
+            break;
+
+
+        case WM_COMMAND:
         {
+
+            if (LOWORD(wParam) == 2) {
+                isPressed = !isPressed;
+                InvalidateRect(hWnd, NULL, TRUE);  
+            }
+
+
             int wmId = LOWORD(wParam);
             switch (wmId)
             {
-            case IDM_ABOUT:
-                DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
-                break;
-            case IDM_EXIT:
-                DestroyWindow(hWnd);
-                break;
-            case 1: // Handling the button press with ID 1
-                SendHttpRequest(hWnd);
+                case IDM_EXIT:
+                    DestroyWindow(hWnd);
+                    break;
+                case 1:
+                    break;
+
+                case 4: //Кнопка с ID 2 
+                {
+					wchar_t exePath[MAX_PATH];
+					GetModuleFileNameW(NULL, exePath, MAX_PATH);  // Gets full path to your .exe
+
+					bool success = AddToStartup(L"MyAutoStartApp", exePath);
+
+					if (success) {
+						MessageBoxW(NULL, L"App successfully added to startup!", L"Success", MB_OK);
+					} else {
+						MessageBoxW(NULL, L"Failed to add app to startup.", L"Error", MB_OK | MB_ICONERROR);
+					}
+				}
 
                 break;
-            default:
-                return DefWindowProc(hWnd, message, wParam, lParam);
+
+                case 5: 
+                {
+
+					HKEY hKey;
+					if (RegCreateKeyExW(HKEY_CURRENT_USER,
+						L"Software\\MyAppName",
+						0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS)
+					{
+						DWORD value = 1;
+						RegSetValueExW(hKey, L"SilentStart", 0, REG_DWORD, (BYTE*)&value, sizeof(value));
+						RegCloseKey(hKey);
+						MessageBoxW(hWnd, L"Silent Start enabled. App will run hidden next time.", L"Info", MB_OK);
+					}
+					break;
+
+                }
+
+				case 2: //Кнопка с ID 2 
+				{
+                    isThereAnError = false;
+
+
+					wchar_t buffer[100];
+					GetWindowTextW(hWndLoginIntputTextBox, buffer, 100);
+
+                    if (wcscmp(buffer, L"") != 0) 
+                    {
+                        isLoggedIn = true;
+
+                        //Рисуем зеленый индикатор connect при успешном подключении
+						{
+							PAINTSTRUCT ps;
+							HDC hdc = BeginPaint(hWnd, &ps);
+
+							isClicked = true;
+
+							HBRUSH hBrush = CreateSolidBrush(isClicked ? RGB(0, 255, 0) : RGB(255, 0, 0)); 
+
+							RECT rect = { 250,185, 350, 215 };  
+							FillRect(hdc, &rect, hBrush);
+							DeleteObject(hBrush);
+
+							SetBkMode(hdc, TRANSPARENT); 
+							SetTextColor(hdc, RGB(0, 0, 0)); 
+
+							const wchar_t* text = L"Connected";
+							DrawText(hdc, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+							EndPaint(hWnd, &ps);
+						}
+
+                        //Определяем логин, который отправится в сообщении
+                        {
+							wchar_t loginbuffer[100];
+							GetWindowTextW(hWndLoginIntputTextBox, loginbuffer, 100);
+
+							std::wstring wlogin(loginbuffer);
+							std::string login = std::wstring_convert<std::codecvt_utf8<wchar_t>>().to_bytes(wlogin);
+
+                            nameToSend = login;
+
+							wchar_t ipbuffer[100];
+							GetWindowTextW(hWndIPIntputTextBox, ipbuffer, 100);
+
+							std::wstring wip(ipbuffer);
+							std::string ip = std::wstring_convert<std::codecvt_utf8<wchar_t>>().to_bytes(wip);
+
+                            ipToSend = ip;
+
+                        }
+
+                    }
+                    else {
+                        isLoggedIn = false;
+						MessageBoxW(hWnd, L"Access denied. Please enter you username.", L"Permission", MB_OK | MB_ICONWARNING);
+                    }
+
+					break;
+
+				}
+
+                default:
+                    return DefWindowProc(hWnd, message, wParam, lParam);
             }
         }
         break;
-    case WM_PAINT:
+
+        case WM_CTLCOLORBTN: {
+            HWND hButton = (HWND)lParam;
+            if (isPressed) {
+                SetBkColor((HDC)wParam, RGB(0, 255, 0));  
+                SetTextColor((HDC)wParam, RGB(0, 0, 0)); 
+                return (LRESULT)hbrPressed;  
+            } else {
+                SetBkColor((HDC)wParam, RGB(255, 255, 255)); 
+                SetTextColor((HDC)wParam, RGB(0, 0, 0));  
+                return (LRESULT)hbrNormal; 
+            }
+        }
+
+        case WM_PAINT:
         {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hWnd, &ps);
             EndPaint(hWnd, &ps);
         }
         break;
-    case WM_DESTROY:
-        KillTimer(hWnd, IDT_HTTP_TIMER);
-        PostQuitMessage(0);
-        break;
-    default:
-        return DefWindowProc(hWnd, message, wParam, lParam);
+
+        case WM_DESTROY:
+            KillTimer(hWnd, IDT_HTTP_TIMER); 
+			DeleteObject(hRedBrush);
+
+            PostQuitMessage(0);
+            break;
+        default:
+            return DefWindowProc(hWnd, message, wParam, lParam);
     }
     return 0;
 }
 
-// About dialog function
-INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK PopupWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    UNREFERENCED_PARAMETER(lParam);
-    switch (message)
+    switch (msg)
     {
-    case WM_INITDIALOG:
-        return (INT_PTR)TRUE;
-
-    case WM_COMMAND:
-        if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
-        {
-            EndDialog(hDlg, LOWORD(wParam));
-            return (INT_PTR)TRUE;
-        }
+    case WM_DESTROY:
+        PostQuitMessage(0);
         break;
+    case WM_CLOSE:
+        DestroyWindow(hWnd);
+        break;
+    default:
+        return DefWindowProc(hWnd, msg, wParam, lParam);
     }
-    return (INT_PTR)FALSE;
+    return 0;
+}
+
+LRESULT CALLBACK NewWindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg)
+    {
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        break;
+    default:
+        return DefWindowProc(hWnd, msg, wParam, lParam);
+    }
+    return 0;
 }

@@ -32,6 +32,9 @@
     <ClCompile Include="CentavrClient.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="addr.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="CentavrClient.rc">
