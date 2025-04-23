@@ -27,7 +27,7 @@
 
 using namespace std::chrono;
 
-//Глобальные переменные
+//ГѓГ«Г®ГЎГ Г«ГјГ­Г»ГҐ ГЇГҐГ°ГҐГ¬ГҐГ­Г­Г»ГҐ
 HINSTANCE hInst;                             
 WCHAR szTitle[MAX_LOADSTRING];              
 WCHAR szWindowClass[MAX_LOADSTRING];       
@@ -45,7 +45,7 @@ steady_clock::time_point lastMouseMoveTime = steady_clock::now();
 HHOOK g_mouseHook = NULL;
 bool silentMode = false;  // Default to false, assuming not in silent mode
 
-//Прототипы
+//ГЏГ°Г®ГІГ®ГІГЁГЇГ»
 ATOM MyRegisterClass(HINSTANCE hInstance);
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow, bool silentMode);
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -55,7 +55,7 @@ void SendHttpRequest(HWND hWnd);
 void UpdateTextOutput(HWND hWnd, const std::string& text);
 void ShowNotificationWindow(HWND hWndParent, const std::string& message);
 
-//Для захвата курсора
+//Г„Г«Гї Г§Г ГµГўГ ГІГ  ГЄГіГ°Г±Г®Г°Г 
 LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
     if (nCode == HC_ACTION) {
@@ -82,7 +82,7 @@ void RemoveGlobalMouseHook()
     }
 }
 
-//Получение адресов
+//ГЏГ®Г«ГіГ·ГҐГ­ГЁГҐ Г Г¤Г°ГҐГ±Г®Гў
 std::string GetMACAddress() {
     IP_ADAPTER_INFO adapterInfo[16];
     DWORD buflen = sizeof(adapterInfo);
@@ -135,7 +135,7 @@ void SendScreenshotToServer(HWND hWnd) {
     if (!isLoggedIn) return;
     if (isThereAnError) return;
 
-    // Захват окна
+    // Г‡Г ГµГўГ ГІ Г®ГЄГ­Г 
     HDC hdcScreen = GetDC(NULL);
     HDC hdcMemDC = CreateCompatibleDC(hdcScreen);
     int nScreenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -144,7 +144,7 @@ void SendScreenshotToServer(HWND hWnd) {
     SelectObject(hdcMemDC, hBitmap);
     BitBlt(hdcMemDC, 0, 0, nScreenWidth, nScreenHeight, hdcScreen, 0, 0, SRCCOPY);
 
-    // Настройка битмап в хедер (Иначе не будет правильно отображатсья на сервере)
+    // ГЌГ Г±ГІГ°Г®Г©ГЄГ  ГЎГЁГІГ¬Г ГЇ Гў ГµГҐГ¤ГҐГ° (Г€Г­Г Г·ГҐ Г­ГҐ ГЎГіГ¤ГҐГІ ГЇГ°Г ГўГЁГ«ГјГ­Г® Г®ГІГ®ГЎГ°Г Г¦Г ГІГ±ГјГї Г­Г  Г±ГҐГ°ГўГҐГ°ГҐ)
     BITMAPINFOHEADER biHeader = {};
     biHeader.biSize = sizeof(BITMAPINFOHEADER);
     biHeader.biWidth = nScreenWidth;
@@ -171,7 +171,7 @@ void SendScreenshotToServer(HWND hWnd) {
     memcpy(fullBitmap.data() + sizeof(BITMAPFILEHEADER), &biHeader, sizeof(BITMAPINFOHEADER));
     memcpy(fullBitmap.data() + bmfHeader.bfOffBits, bitmapData.data(), bitmapData.size());
 
-    //Сохранение на клиенте (для тестрования)
+    //Г‘Г®ГµГ°Г Г­ГҐГ­ГЁГҐ Г­Г  ГЄГ«ГЁГҐГ­ГІГҐ (Г¤Г«Гї ГІГҐГ±ГІГ°Г®ГўГ Г­ГЁГї)
     std::wstring filePath = L"screenshot_output.bmp";
     HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile != INVALID_HANDLE_VALUE) {
@@ -181,7 +181,7 @@ void SendScreenshotToServer(HWND hWnd) {
         ShellExecuteW(NULL, L"open", filePath.c_str(), NULL, NULL, SW_SHOWNORMAL);
     }
 
-    //Отправка на сервер
+    //ГЋГІГЇГ°Г ГўГЄГ  Г­Г  Г±ГҐГ°ГўГҐГ°
     std::string ip = GetLocalIPAddress();
     std::string mac = GetMACAddress();
     std::string login = nameToSend;
@@ -191,7 +191,7 @@ void SendScreenshotToServer(HWND hWnd) {
 
     HINTERNET hInternet = InternetOpenA("CentavrClient", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     if (!hInternet) {
-        MessageBoxW(hWnd, L"Не удалось инициализировать интернет-соединение", L"Ошибка", MB_OK | MB_ICONERROR);
+        MessageBoxW(hWnd, L"ГЌГҐ ГіГ¤Г Г«Г®Г±Гј ГЁГ­ГЁГ¶ГЁГ Г«ГЁГ§ГЁГ°Г®ГўГ ГІГј ГЁГ­ГІГҐГ°Г­ГҐГІ-Г±Г®ГҐГ¤ГЁГ­ГҐГ­ГЁГҐ", L"ГЋГёГЁГЎГЄГ ", MB_OK | MB_ICONERROR);
         return;
     }
 
@@ -206,14 +206,14 @@ void SendScreenshotToServer(HWND hWnd) {
 
     HINTERNET hConnect = InternetConnectA(hInternet, host, INTERNET_DEFAULT_HTTP_PORT, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     if (!hConnect) {
-        MessageBoxW(hWnd, L"Ошибка соединения с хостом", L"Ошибка", MB_OK | MB_ICONERROR);
+        MessageBoxW(hWnd, L"ГЋГёГЁГЎГЄГ  Г±Г®ГҐГ¤ГЁГ­ГҐГ­ГЁГї Г± ГµГ®Г±ГІГ®Г¬", L"ГЋГёГЁГЎГЄГ ", MB_OK | MB_ICONERROR);
         InternetCloseHandle(hInternet);
         return;
     }
 
     HINTERNET hRequest = HttpOpenRequestA(hConnect, "PUT", path, NULL, NULL, NULL, INTERNET_FLAG_RELOAD, 0);
     if (!hRequest) {
-        MessageBoxW(hWnd, L"Ошибка создания запроса", L"Ошибка", MB_OK | MB_ICONERROR);
+        MessageBoxW(hWnd, L"ГЋГёГЁГЎГЄГ  Г±Г®Г§Г¤Г Г­ГЁГї Г§Г ГЇГ°Г®Г±Г ", L"ГЋГёГЁГЎГЄГ ", MB_OK | MB_ICONERROR);
         InternetCloseHandle(hConnect);
         InternetCloseHandle(hInternet);
         return;
@@ -223,12 +223,12 @@ void SendScreenshotToServer(HWND hWnd) {
     BOOL bSent = HttpSendRequestA(hRequest, headers.c_str(), headers.length(), fullBitmap.data(), fullBitmap.size());
 
     if (!bSent) {
-        MessageBoxW(hWnd, L"Не удалось отправить скриншот", L"Ошибка", MB_OK | MB_ICONERROR);
+        MessageBoxW(hWnd, L"ГЌГҐ ГіГ¤Г Г«Г®Г±Гј Г®ГІГЇГ°Г ГўГЁГІГј Г±ГЄГ°ГЁГ­ГёГ®ГІ", L"ГЋГёГЁГЎГЄГ ", MB_OK | MB_ICONERROR);
     } else {
-        MessageBoxW(hWnd, L"Скриншот отправлен на сервак", L"Успех", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(hWnd, L"Г‘ГЄГ°ГЁГ­ГёГ®ГІ Г®ГІГЇГ°Г ГўГ«ГҐГ­ Г­Г  Г±ГҐГ°ГўГ ГЄ", L"Г“Г±ГЇГҐГµ", MB_OK | MB_ICONINFORMATION);
     }
 
-    // Очистка
+    // ГЋГ·ГЁГ±ГІГЄГ 
     InternetCloseHandle(hRequest);
     InternetCloseHandle(hConnect);
     InternetCloseHandle(hInternet);
@@ -270,14 +270,14 @@ void SendHttpRequest(HWND hWnd)
     hInternet = InternetOpenA("CentavrClient", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     if (hInternet == NULL) {
         isThereAnError = true;
-        MessageBoxW(hWnd, L"Не удалось инициализировать интернет-соединение", L"Ошибка", MB_OK | MB_ICONERROR);
+        MessageBoxW(hWnd, L"ГЌГҐ ГіГ¤Г Г«Г®Г±Гј ГЁГ­ГЁГ¶ГЁГ Г«ГЁГ§ГЁГ°Г®ГўГ ГІГј ГЁГ­ГІГҐГ°Г­ГҐГІ-Г±Г®ГҐГ¤ГЁГ­ГҐГ­ГЁГҐ", L"ГЋГёГЁГЎГЄГ ", MB_OK | MB_ICONERROR);
         return;
     }
 
     hConnect = InternetOpenUrlA(hInternet, url, NULL, 0, INTERNET_FLAG_RELOAD, 0);
     if (hConnect == NULL) {
         isThereAnError = true;
-        MessageBoxW(hWnd, L"Не удалось подключиться к серверу", L"Ошибка", MB_OK | MB_ICONERROR);
+        MessageBoxW(hWnd, L"ГЌГҐ ГіГ¤Г Г«Г®Г±Гј ГЇГ®Г¤ГЄГ«ГѕГ·ГЁГІГјГ±Гї ГЄ Г±ГҐГ°ГўГҐГ°Гі", L"ГЋГёГЁГЎГЄГ ", MB_OK | MB_ICONERROR);
         InternetCloseHandle(hInternet);
 
         return;
@@ -289,7 +289,7 @@ void SendHttpRequest(HWND hWnd)
 
     if (dwTotalBytesRead == 0) {
         isThereAnError = true;
-        MessageBoxW(hWnd, L"Ответ от сервера не содержит данных", L"Ошибка", MB_OK | MB_ICONERROR);
+        MessageBoxW(hWnd, L"ГЋГІГўГҐГІ Г®ГІ Г±ГҐГ°ГўГҐГ°Г  Г­ГҐ Г±Г®Г¤ГҐГ°Г¦ГЁГІ Г¤Г Г­Г­Г»Гµ", L"ГЋГёГЁГЎГЄГ ", MB_OK | MB_ICONERROR);
         delete[] buffer;
         InternetCloseHandle(hConnect);
         InternetCloseHandle(hInternet);
@@ -304,7 +304,7 @@ void SendHttpRequest(HWND hWnd)
 
     UpdateTextOutput(hWnd, jsonResponse);
 
-    //парсинг джейсона, чтобы получить значение bool sendScreenShot
+    //ГЇГ Г°Г±ГЁГ­ГЈ Г¤Г¦ГҐГ©Г±Г®Г­Г , Г·ГІГ®ГЎГ» ГЇГ®Г«ГіГ·ГЁГІГј Г§Г­Г Г·ГҐГ­ГЁГҐ bool sendScreenShot
 	std::string sendScreenShotValue;
 	size_t keyPos = jsonResponse.find("\"sendScreenShot\"");
 	if (keyPos != std::string::npos) {
@@ -316,7 +316,7 @@ void SendHttpRequest(HWND hWnd)
 		}
 	}
 
-    //если тру то отправляем скриншот на сервер
+    //ГҐГ±Г«ГЁ ГІГ°Гі ГІГ® Г®ГІГЇГ°Г ГўГ«ГїГҐГ¬ Г±ГЄГ°ГЁГ­ГёГ®ГІ Г­Г  Г±ГҐГ°ГўГҐГ°
 	if (sendScreenShotValue == "true") {
 		ShowNotificationWindow(hWnd, sendScreenShotValue);
         SendScreenshotToServer(hWnd);
@@ -324,7 +324,7 @@ void SendHttpRequest(HWND hWnd)
 
 }
 
-//Сообщение об отправке скриншота
+//Г‘Г®Г®ГЎГ№ГҐГ­ГЁГҐ Г®ГЎ Г®ГІГЇГ°Г ГўГЄГҐ Г±ГЄГ°ГЁГ­ГёГ®ГІГ 
 void ShowNotificationWindow(HWND hWndParent, const std::string& message)
 {
     const wchar_t CLASS_NAME[] = L"NotificationWindow";
@@ -381,7 +381,7 @@ void ShowNotificationWindow(HWND hWndParent, const std::string& message)
 }
 
 
-//Добавление в автозапуск
+//Г„Г®ГЎГ ГўГ«ГҐГ­ГЁГҐ Гў Г ГўГІГ®Г§Г ГЇГіГ±ГЄ
 bool AddToStartup(const std::wstring& appName, const std::wstring& exePath)
 {
     HKEY hKey;
@@ -398,13 +398,13 @@ bool AddToStartup(const std::wstring& appName, const std::wstring& exePath)
     return (result == ERROR_SUCCESS);
 }
 
-// обновление текста в текст боксе
+// Г®ГЎГ­Г®ГўГ«ГҐГ­ГЁГҐ ГІГҐГЄГ±ГІГ  Гў ГІГҐГЄГ±ГІ ГЎГ®ГЄГ±ГҐ
 void UpdateTextOutput(HWND hWnd, const std::string& text)
 {
     SetWindowTextA(hWndOutputTextBox, text.c_str() );
 }
 
-// главная функция
+// ГЈГ«Г ГўГ­Г Гї ГґГіГ­ГЄГ¶ГЁГї
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
                      _In_ LPWSTR    lpCmdLine,
@@ -464,7 +464,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     return (int) msg.wParam;
 }
 
-//регистрация главного окна
+//Г°ГҐГЈГЁГ±ГІГ°Г Г¶ГЁГї ГЈГ«Г ГўГ­Г®ГЈГ® Г®ГЄГ­Г 
 ATOM MyRegisterClass(HINSTANCE hInstance)
 {
     WNDCLASSEXW wcex;
@@ -490,7 +490,7 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
 
 NOTIFYICONDATA nid = { 0 };
 
-//создаем все содержание главного окна
+//Г±Г®Г§Г¤Г ГҐГ¬ ГўГ±ГҐ Г±Г®Г¤ГҐГ°Г¦Г Г­ГЁГҐ ГЈГ«Г ГўГ­Г®ГЈГ® Г®ГЄГ­Г 
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow, bool silentMode = false)
 {
    hInst = hInstance; 
@@ -673,10 +673,13 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow, bool silentMode = false)
     if (!silentMode) {
         ShowWindow(hWnd, nCmdShow);
 	   UpdateWindow(hWnd);
-        //ShowWindow(hWnd, SW_HIDE); // скрываем
+        //ShowWindow(hWnd, SW_HIDE); // Г±ГЄГ°Г»ГўГ ГҐГ¬
     } else {
-        ShowWindow(hWnd, SW_HIDE); // скрываем
+        ShowWindow(hWnd, SW_HIDE); // Г±ГЄГ°Г»ГўГ ГҐГ¬
     }
+    //!!!!!!!!!!!!!!!!!!!!!!!!Р РђРЎРљРћРњРњР•РќРўРР РЈР™РўР• Р•РЎР›Р РҐРћРўРРўР• Р’Р«РљР›Р®Р§РРўР¬ РќР•Р—РђРњР•РўРќР«Р™ Р Р•Р–РРњ!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	//ShowWindow(hWnd, nCmdShow);
+    //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
    UpdateWindow(hWnd);
@@ -689,7 +692,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow, bool silentMode = false)
 #define IDT_HTTP_TIMER 1  
 #define TIMER_INTERVAL 2000 
 
-//Обработка сообщений
+//ГЋГЎГ°Г ГЎГ®ГІГЄГ  Г±Г®Г®ГЎГ№ГҐГ­ГЁГ©
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 
@@ -780,7 +783,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 case 1:
                     break;
 
-                case 4: //Кнопка с ID 2 
+                case 4: //ГЉГ­Г®ГЇГЄГ  Г± ID 2 
                 {
 					wchar_t exePath[MAX_PATH];
 					GetModuleFileNameW(NULL, exePath, MAX_PATH);  // Gets full path to your .exe
@@ -813,7 +816,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
                 }
 
-				case 2: //Кнопка с ID 2 
+				case 2: //ГЉГ­Г®ГЇГЄГ  Г± ID 2 
 				{
                     isThereAnError = false;
 
@@ -825,7 +828,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     {
                         isLoggedIn = true;
 
-                        //Рисуем зеленый индикатор connect при успешном подключении
+                        //ГђГЁГ±ГіГҐГ¬ Г§ГҐГ«ГҐГ­Г»Г© ГЁГ­Г¤ГЁГЄГ ГІГ®Г° connect ГЇГ°ГЁ ГіГ±ГЇГҐГёГ­Г®Г¬ ГЇГ®Г¤ГЄГ«ГѕГ·ГҐГ­ГЁГЁ
 						{
 							PAINTSTRUCT ps;
 							HDC hdc = BeginPaint(hWnd, &ps);
@@ -847,7 +850,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 							EndPaint(hWnd, &ps);
 						}
 
-                        //Определяем логин, который отправится в сообщении
+                        //ГЋГЇГ°ГҐГ¤ГҐГ«ГїГҐГ¬ Г«Г®ГЈГЁГ­, ГЄГ®ГІГ®Г°Г»Г© Г®ГІГЇГ°Г ГўГЁГІГ±Гї Гў Г±Г®Г®ГЎГ№ГҐГ­ГЁГЁ
                         {
 							wchar_t loginbuffer[100];
 							GetWindowTextW(hWndLoginIntputTextBox, loginbuffer, 100);
